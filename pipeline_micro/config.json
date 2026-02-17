@@ -1,0 +1,14 @@
+{
+  "data_dir": "data",
+  "labels_file": "labels.lbl",
+  "test_labels_file": "test_labels.lbl",
+  "artifacts_dir": "artifacts",
+  "models": ["randomforest", "logreg"],
+  "feature_set": "both",
+  "window_sec": 25,
+  "step_sec": 12,
+  "min_points": 300,
+  "max_points": 500,
+  "cv_splits": 5,
+  "random_state": 42
+}

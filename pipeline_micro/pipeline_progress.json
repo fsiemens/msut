@@ -1,0 +1,1 @@
+{"phase": "done", "total": 5, "completed": ["FSGemini | extratrees", "FSGemini | randomforest", "FSGemini | logreg", "FSGemini | svm_rbf", "FSGemini | nearest_centroid"], "in_progress": [], "message": "Fertig", "remaining": 0, "percent": 100.0}
