@@ -1,0 +1,7 @@
+pandas
+numpy
+featuretools
+tsfresh
+scikit-learn
+joblib
+matplotlib
