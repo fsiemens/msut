@@ -11,15 +11,13 @@ Zeilen mit leerem Label werden ausgelassen (nur gelabelte Recordings für Traini
 """
 
 from __future__ import annotations
-
 from pathlib import Path
-
 import pandas as pd
 
 
-def load_labels_file(
-    lbl_path: Path,
-    base_dir: Path | None = None,
+def loadLabelFile(
+    path: Path,
+    baseDir: Path | None = None,
 ) -> tuple[list[Path], list[str]]:
     """
     Lädt eine LBL-Datei und gibt (csv_paths, driver_ids) zurück.
@@ -37,57 +35,55 @@ def load_labels_file(
         FileNotFoundError: Wenn lbl_path nicht existiert.
         ValueError: Wenn die LBL-Datei ungültig ist oder keine gültigen Zeilen hat.
     """
-    lbl_path = Path(lbl_path).resolve()
-    if not lbl_path.exists():
-        raise FileNotFoundError(f"LBL-Datei nicht gefunden: {lbl_path}")
+    path = Path(path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Label-Datei nicht gefunden: {path}")
 
-    base = base_dir.resolve() if base_dir else lbl_path.parent
+    base = baseDir.resolve() if baseDir else path.parent
 
-    # CSV einlesen (Komma oder Semikolon)
     try:
-        df = pd.read_csv(lbl_path, sep=None, engine="python", encoding="utf-8")
+        df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8")
     except Exception as e:
-        raise ValueError(f"LBL-Datei konnte nicht gelesen werden: {e}") from e
+        raise ValueError(f"Label-Datei konnte nicht gelesen werden: {e}") from e
 
-    # Spalten normalisieren (File/Label, file/label)
     cols = {c.strip().lower(): c for c in df.columns}
     if "file" not in cols or "label" not in cols:
         raise ValueError(
-            f"LBL-Datei muss Spalten 'File' und 'Label' haben. Gefunden: {list(df.columns)}"
+            f"Label-Datei muss Spalten 'File' und 'Label' haben. Gefunden: {list(df.columns)}"
         )
-    file_col = cols["file"]
-    label_col = cols["label"]
+    fileCol = cols["file"]
+    labelCol = cols["label"]
 
-    csv_paths: list[Path] = []
-    driver_ids: list[str] = []
+    csvPaths: list[Path] = []
+    driverIds: list[str] = []
 
     for _, row in df.iterrows():
-        f = row.get(file_col)
-        lbl = row.get(label_col)
-        if pd.isna(f) or str(f).strip() == "":
+        file = row.get(fileCol)
+        label = row.get(labelCol)
+        if pd.isna(file) or str(file).strip() == "":
             continue
-        if pd.isna(lbl) or str(lbl).strip() == "":
+        if pd.isna(label) or str(label).strip() == "":
             continue  # Zeilen ohne Label überspringen
-        fpath = Path(str(f).strip())
-        if not fpath.is_absolute():
-            fpath = base / fpath
-        fpath = fpath.resolve()
-        if not fpath.exists():
-            raise FileNotFoundError(f"Recording nicht gefunden: {fpath}")
-        csv_paths.append(fpath)
-        driver_ids.append(str(lbl).strip()) # temp removed .lower()
+        filePath = Path(str(file).strip())
+        if not filePath.is_absolute():
+            filePath = base / filePath
+        filePath = filePath.resolve()
+        if not filePath.exists():
+            raise FileNotFoundError(f"Recording nicht gefunden: {filePath}")
+        csvPaths.append(filePath)
+        driverIds.append(str(label).strip().lower())
 
-    if not csv_paths:
+    if not csvPaths:
         raise ValueError(
-            f"LBL-Datei enthält keine Zeilen mit gültigem Label: {lbl_path}"
+            f"LBL-Datei enthält keine Zeilen mit gültigem Label: {path}"
         )
 
-    return csv_paths, driver_ids
+    return csvPaths, driverIds
 
 
-def load_holdout_file(
-    lbl_path: Path,
-    base_dir: Path | None = None,
+def loadHoldoutFile(
+    path: Path,
+    baseDir: Path | None = None,
 ) -> tuple[list[Path], list[str]]:
     """
     Lädt eine Holdout-Datei (gleiches Format wie LBL: File, Label).
@@ -98,14 +94,14 @@ def load_holdout_file(
     Returns:
         (csv_paths, driver_ids)
     """
-    lbl_path = Path(lbl_path).resolve()
-    if not lbl_path.exists():
-        raise FileNotFoundError(f"Holdout-Datei nicht gefunden: {lbl_path}")
+    path = Path(path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Holdout-Datei nicht gefunden: {path}")
 
-    base = base_dir.resolve() if base_dir else lbl_path.parent
+    base = baseDir.resolve() if baseDir else path.parent
 
     try:
-        df = pd.read_csv(lbl_path, sep=None, engine="python", encoding="utf-8")
+        df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8")
     except Exception as e:
         raise ValueError(f"Holdout-Datei konnte nicht gelesen werden: {e}") from e
 
@@ -114,36 +110,36 @@ def load_holdout_file(
         raise ValueError(
             f"Holdout-Datei muss Spalten 'File' und 'Label' haben. Gefunden: {list(df.columns)}"
         )
-    file_col = cols["file"]
-    label_col = cols["label"]
+    fileCol = cols["file"]
+    labelCol = cols["label"]
 
     csv_paths: list[Path] = []
     driver_ids: list[str] = []
 
     for _, row in df.iterrows():
-        f = row.get(file_col)
-        lbl = row.get(label_col)
-        if pd.isna(f) or str(f).strip() == "":
+        file = row.get(fileCol)
+        label = row.get(labelCol)
+        if pd.isna(file) or str(file).strip() == "":
             continue
-        fpath = Path(str(f).strip())
+        fpath = Path(str(file).strip())
         if not fpath.is_absolute():
             fpath = base / fpath
         fpath = fpath.resolve()
         if not fpath.exists():
             raise FileNotFoundError(f"Holdout-Recording nicht gefunden: {fpath}")
         csv_paths.append(fpath)
-        if pd.isna(lbl) or str(lbl).strip() == "":
+        if pd.isna(label) or str(label).strip() == "":
             driver_ids.append("__unlabeled__")  # Platzhalter für Evaluation (wird übersprungen)
         else:
-            driver_ids.append(str(lbl).strip().lower())
+            driver_ids.append(str(label).strip().lower())
 
     if not csv_paths:
-        raise ValueError(f"Holdout-Datei enthält keine gültigen Zeilen: {lbl_path}")
+        raise ValueError(f"Holdout-Datei enthält keine gültigen Zeilen: {path}")
 
     return csv_paths, driver_ids
 
 
-def save_labels_template(out_path: Path, csv_paths: list[Path], driver_ids: list[str] | None = None) -> None:
+def saveLabelTemplate(out_path: Path, csv_paths: list[Path], driver_ids: list[str] | None = None) -> None:
     """
     Speichert eine LBL-Datei (z. B. als Vorlage oder nach manueller Auswahl).
 

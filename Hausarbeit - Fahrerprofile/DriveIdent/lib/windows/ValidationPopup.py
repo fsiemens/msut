@@ -1,12 +1,13 @@
 import tkinter as tk
+import pandas as pd
 from tkinter import ttk
 from typing import cast, Callable, Literal
-from .frames.ValidationFrame import ValidationFrame
+from .frames.ProgressFrame import ProgressFrame
 from .frames.PostValidationFrame import PostValidationFrame
 
 class ValidationPopup(tk.Frame):
     
-    def __init__(self, parent, styleConfig : dict, target : Literal["train", "test"], files : list[str], onPopupClose : Callable[[bool, Literal["train", "test"], list[str], list[str]], None]):
+    def __init__(self, parent, styleConfig : dict, destination, files : list[str], onPopupClose : Callable[[bool, pd.DataFrame, list[str], list[str]], None]):
         popup = tk.Toplevel(parent)
         popup.title("Popup")
         popup.geometry("500x600")
@@ -18,16 +19,16 @@ class ValidationPopup(tk.Frame):
         popup.grab_set()          # makes window modal
 
         self.styleConfig = styleConfig
-        self.target = target
+        self.destination = destination
         self.files = files
         self.faultyFiles = []
         self.popup = popup
         self.closeAction = onPopupClose
-        self.frame = ValidationFrame(popup, self.styleConfig, len(files), onCancel=self.cancel) 
+        self.frame = ProgressFrame(popup, self.styleConfig, "Validating files...", len(files), onCancel=self.cancel) 
         self.frame.pack(pady=styleConfig["paddings"]["default"], expand=True)
 
     def updateProgress(self, value : int, message : str):
-        if not isinstance(self.frame, ValidationFrame):
+        if not isinstance(self.frame, ProgressFrame):
             return
 
         self.frame.messageLabel["text"] = message
@@ -35,11 +36,11 @@ class ValidationPopup(tk.Frame):
 
     def proceed(self):
         self.popup.destroy()
-        self.closeAction(True, cast(Literal["train", "test"], self.target), self.files, self.faultyFiles)
+        self.closeAction(True, self.destination, self.files, self.faultyFiles)
 
     def cancel(self):
         self.popup.destroy()
-        self.closeAction(False, cast(Literal["train", "test"], self.target), self.files, self.faultyFiles)
+        self.closeAction(False, self.destination, self.files, self.faultyFiles)
 
     def showPostValidationFrame(self):
         if self.frame is not None:

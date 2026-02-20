@@ -9,17 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-
 import pandas as pd
-
-from plots import (
-    plot_accuracy_summary,
-    plot_f1_precision_recall_summary,
-    plot_heatmap_accuracy_matrix,
-    plot_heatmap_metrics_f1_precision_recall,
-    plot_loo_accuracy_per_combo,
-    plot_loo_recording_heatmap,
-)
 
 
 def write_reports_and_plots(
@@ -37,6 +27,14 @@ def write_reports_and_plots(
     no_plots: bool,
 ) -> None:
     """Schreibt alle Reports, Summary-Plots und LOO-Dateien."""
+    from plots import (
+        plot_accuracy_summary,
+        plot_f1_precision_recall_summary,
+        plot_heatmap_accuracy_matrix,
+        plot_heatmap_metrics_f1_precision_recall,
+        plot_loo_accuracy_per_combo,
+        plot_loo_recording_heatmap,
+    )
 
     summary.to_csv(out_dir / "metrics_summary.csv", index=False)
 

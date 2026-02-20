@@ -2,20 +2,20 @@
 
 --- 
 
-Streckenablauf mitbringen!
-Stick / Laptop für Download mitbringen!
-Skript für Datenanalyse mitbringen!
+x Streckenablauf mitbringen!
+x Stick / Laptop für Download mitbringen!
+x Skript für Datenanalyse mitbringen!
 - Vorher nochmal überarbeiten --> Automatisierte Überprüfung
 	- Anz. Spalten / Features
 	- Min / Max --> Ausreißer
 	- Graphische Darstellung 
 
-Strecke abfahren, Durchläufe pP.: 5
+x Strecke abfahren, Durchläufe pP.: 5
 - Durchwechseln nach jeder Fahrt
 - Nachtfahrten pP.: 2-3
 	- Vorher nachfragen
-Strecke vor Ort abfotografieren / hochauflösendes Bild erhalten
-Daten vor Ort überprüfen
+o Strecke vor Ort abfotografieren / hochauflösendes Bild erhalten
+x Daten vor Ort überprüfen
 - Derjenige, der gerade nicht fährt
 - Skript durchlaufen lassen und prüfen ob es Ausreißer gibt
-Fahrer + Uhrzeit dokumentieren
+x Fahrer + Uhrzeit dokumentieren

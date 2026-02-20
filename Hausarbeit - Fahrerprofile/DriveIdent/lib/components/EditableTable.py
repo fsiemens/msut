@@ -5,9 +5,10 @@ import os
 
 class EditableTable(ttk.Frame):
     
-    def __init__(self, parent, data : pd.DataFrame):
+    def __init__(self, parent, data : pd.DataFrame, editable : bool = True):
         super().__init__(parent)
         self.data = data
+        self.editable = editable
         self.totalWidth = self.winfo_width()
         
         self.tree = ttk.Treeview(self, columns=list(data.columns), show="headings")
@@ -32,6 +33,9 @@ class EditableTable(ttk.Frame):
         self.entry = None
 
     def onDoubleClick(self, event):
+        if not self.editable:
+            return
+
         region = self.tree.identify("region", event.x, event.y)
         if region != "cell":
             return
@@ -66,7 +70,7 @@ class EditableTable(ttk.Frame):
             self.entry = None
 
     def refresh(self):
-        
+        print("refreshing table")
         for row_id in self.tree.get_children():
             self.tree.delete(row_id)
 

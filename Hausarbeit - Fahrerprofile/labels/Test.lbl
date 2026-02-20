@@ -1,9 +1,4 @@
-path,driver,filename
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_fabian_1.csv,Fabian,recording_fabian_1.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_florian_1.csv,Florian,recording_florian_1.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_fabian_2.csv,Fabian,recording_fabian_2.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_florian_2.csv,Florian,recording_florian_2.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_florian_3.csv,Florian,recording_florian_3.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_matthias_1.csv,Matthias,recording_matthias_1.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_matthias_2.csv,Matthias,recording_matthias_2.csv
-D:/Windows/Desktop/MSuT/Hausarbeit - Fahrerprofile/recordings/recording_matthias_3.csv,Matthias,recording_matthias_3.csv
+File,Label
+recording_2025_12_11__12_29_26_flo_test.csv,
+recording_2025_12_11__12_38_11_mat_test.csv,
+recording_2025_12_11__12_46_32_fab_test.csv,

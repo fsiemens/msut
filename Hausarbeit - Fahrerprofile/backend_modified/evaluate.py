@@ -16,8 +16,9 @@ from toolkit import MODEL_SPECIFIC_PLOTS, build_pipeline, get_feature_importance
 from plots import plot_confusion_matrix, plot_feature_importance, plot_metrics_per_combo
 from model_plots import plot_model_specific
 
+
 def run_single_combo(
-    fs_name: str,
+    featureSetName: str,
     model_name: str,
     X: pd.DataFrame,
     y: pd.Series,
@@ -35,7 +36,7 @@ def run_single_combo(
     top_k_importance: int,
 ) -> tuple[dict, pd.DataFrame | None]:
     """
-    Evaluiert eine (fs_name, model_name)-Kombination per CV, speichert Modell und Plots.
+    Evaluiert eine (featureSetName, model_name)-Kombination per CV, speichert Modell und Plots.
 
     Returns:
         (summary_row, loo_per_rec_df or None)
@@ -101,27 +102,27 @@ def run_single_combo(
         pipe.fit(X, y)
     model_subdir = models_dir / model_name
     model_subdir.mkdir(parents=True, exist_ok=True)
-    model_path = model_subdir / f"{fs_name}_{model_name}.joblib"
+    model_path = model_subdir / f"{featureSetName}_{model_name}.joblib"
     save_model_bundle(model_path, pipe, X.columns.tolist(), labels)
 
     loo_df = pd.DataFrame(per_rec_rows) if per_rec_rows else None
 
     if not no_plots:
         plots_dir.mkdir(parents=True, exist_ok=True)
-        plot_confusion_matrix(cm, labels, plots_dir / "confusion" / f"confusion_{fs_name}_{model_name}.png", title=f"{fs_name} | {model_name}", acc=recording_acc)
-        plot_metrics_per_combo(fs_name, model_name, rec_f1, rec_prec, rec_rec, plots_dir / "metrics" / f"metrics_{fs_name}_{model_name}.png")
+        plot_confusion_matrix(cm, labels, plots_dir / "confusion" / f"confusion_{featureSetName}_{model_name}.png", title=f"{featureSetName} | {model_name}", acc=recording_acc)
+        plot_metrics_per_combo(featureSetName, model_name, rec_f1, rec_prec, rec_rec, plots_dir / "metrics" / f"metrics_{featureSetName}_{model_name}.png")
         imp_df = get_feature_importance(pipe, X.columns.tolist())
         if imp_df is not None and not imp_df.empty:
             imp_subdir = plots_dir / "importance" / model_name
             imp_subdir.mkdir(parents=True, exist_ok=True)
-            plot_feature_importance(imp_df, imp_subdir / f"{fs_name}.png", top_k=top_k_importance, title=f"Top Features: {fs_name} | {model_name}")
+            plot_feature_importance(imp_df, imp_subdir / f"{featureSetName}.png", top_k=top_k_importance, title=f"Top Features: {featureSetName} | {model_name}")
         try:
-            plot_model_specific(model_name, pipe, X.columns.tolist(), labels, plots_dir / "model_specific" / f"model_specific_{fs_name}_{model_name}.png", plot_types=MODEL_SPECIFIC_PLOTS, fs_name=fs_name, X=X, y=y)
+            plot_model_specific(model_name, pipe, X.columns.tolist(), labels, plots_dir / "model_specific" / f"model_specific_{featureSetName}_{model_name}.png", plot_types=MODEL_SPECIFIC_PLOTS, fs_name=featureSetName, X=X, y=y)
         except Exception as e:
             print(f"  [skip] Modell-Plot {model_name}: {e}")
 
     summary_row = {
-        "dataset": fs_name,
+        "dataset": featureSetName,
         "model": model_name,
         "train_windows": int(len(X)),
         "n_recordings": n_groups,

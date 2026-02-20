@@ -18,59 +18,30 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy.fft import rfft, rfftfreq
-from scipy.signal import find_peaks
-import pywt  # type: ignore
-
+from scipy.signal import find_peaks, welch, correlate
+from labels import loadHoldoutFile, loadLabelFile
+import antropy as ant
 from tsfresh import extract_features as ts_extract_features
 from tsfresh.feature_extraction import EfficientFCParameters, MinimalFCParameters
 from tsfresh.utilities.dataframe_functions import impute as ts_impute
 from tsfresh import select_features as ts_select_features
 
-from sklearn.ensemble import ExtraTreesClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.model_selection import StratifiedGroupKFold
-
-import featuretools as ft  # type: ignore
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-from labels import load_holdout_file
-from labels import load_labels_file
-
 EPS = 1e-12
 KEY_COLS = ["driver_id", "recording", "window_start_s", "window_end_s"]
 
-
-def _corr(x: np.ndarray, y: np.ndarray) -> float:
+def corr(x, y):
     m = np.isfinite(x) & np.isfinite(y)
-    x, y = x[m], y[m]
-    if len(x) < 10:
-        return np.nan
-    sx, sy = np.std(x), np.std(y)
-    if sx < EPS or sy < EPS:
-        return np.nan
-    return float(np.corrcoef(x, y)[0, 1])
+    return np.corrcoef(x[m], y[m])[0, 1] if m.sum() > 5 else np.nan
 
-
-def _spectral_centroid_flatness(x: np.ndarray, fs_hz: float) -> tuple[float, float]:
-    m = np.isfinite(x)
-    x = x[m]
-    if len(x) < 32 or not np.isfinite(fs_hz) or fs_hz <= 0:
-        return (np.nan, np.nan)
-    x = x - np.mean(x)
-    X = rfft(x)
-    p = (np.abs(X) ** 2) + EPS
-    f = rfftfreq(len(x), d=1.0 / fs_hz)
-    valid = f > 0
-    f, p = f[valid], p[valid]
-    if len(f) == 0:
-        return (np.nan, np.nan)
-    centroid = float(np.sum(f * p) / (np.sum(p) + EPS))
-    flatness = float(np.exp(np.mean(np.log(p))) / (np.mean(p) + EPS))
-    return centroid, flatness
-
+def zero_crossings(x):
+    x = x[np.isfinite(x)]
+    return int(np.sum(np.diff(np.sign(x)) != 0))
 
 def _wavelet_energy_ratios(x: np.ndarray) -> dict[str, float]:
+    try:
+        import pywt  # type: ignore
+    except Exception:
+        return {"wav_d1_ratio": np.nan, "wav_d2_ratio": np.nan, "wav_d3_ratio": np.nan}
     m = np.isfinite(x)
     x = x[m]
     if len(x) < 64:
@@ -108,49 +79,19 @@ def _state_transitions(states: np.ndarray, n_states: int) -> tuple[np.ndarray, i
         prev = s
     return tm, n
 
-
-def _finite(x: np.ndarray) -> np.ndarray:
-    return np.isfinite(x)
-
-
-def _as_float_array(s: pd.Series) -> np.ndarray:
+def _asFloatArray(s: pd.Series) -> np.ndarray:
     return pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
 
 
 def _parse_vec3(series: pd.Series) -> np.ndarray:
     if series is None:
         return np.empty((0, 3), dtype=float)
-    parts = series.astype(str).str.split(",", n=2, expand=True)
-    if parts.shape[1] != 3:
-        return np.full((len(series), 3), np.nan, dtype=float)
-    out = np.empty((len(series), 3), dtype=float)
-    out[:, 0] = pd.to_numeric(parts[0], errors="coerce").to_numpy(dtype=float)
-    out[:, 1] = pd.to_numeric(parts[1], errors="coerce").to_numpy(dtype=float)
-    out[:, 2] = pd.to_numeric(parts[2], errors="coerce").to_numpy(dtype=float)
-    return out
-
-
-def _nan_stats(x: np.ndarray) -> dict[str, float]:
-    m = _finite(x)
-    if m.sum() == 0:
-        return {"mean": np.nan, "std": np.nan, "q95": np.nan}
-    xf = x[m]
-    return {"mean": float(np.mean(xf)), "std": float(np.std(xf, ddof=0)), "q95": float(np.quantile(xf, 0.95))}
-
-
-def _zero_crossings(x: np.ndarray) -> int:
-    m = _finite(x)
-    x = x[m]
-    if len(x) < 2:
-        return 0
-    s = np.sign(x)
-    s[s == 0] = np.nan
-    valid = np.isfinite(s[:-1]) & np.isfinite(s[1:])
-    return int(np.sum(s[:-1][valid] * s[1:][valid] < 0))
-
+    parts = series.str.split(",", expand=True)
+    vec = parts.apply(pd.to_numeric, errors="coerce").values
+    return vec
 
 def _run_lengths_between_sign_changes(x: np.ndarray) -> np.ndarray:
-    m = _finite(x)
+    m = np.isfinite(x)
     x = x[m]
     if len(x) < 2:
         return np.array([], dtype=int)
@@ -162,21 +103,14 @@ def _run_lengths_between_sign_changes(x: np.ndarray) -> np.ndarray:
     idx = np.r_[0, changes, len(x)]
     return np.diff(idx)
 
-
-def _gradient(x: np.ndarray, t: np.ndarray) -> np.ndarray:
-    if len(x) < 3:
-        return np.full_like(x, np.nan, dtype=float)
-    return np.gradient(x, t)
-
-
-def _third_derivative(x: np.ndarray, t: np.ndarray) -> np.ndarray:
-    v = _gradient(x, t)
-    a = _gradient(v, t)
-    return _gradient(a, t)
+def _thirdDerivative(x: np.ndarray, t: np.ndarray) -> np.ndarray:
+    v = np.gradient(x, t)
+    a = np.gradient(v, t)
+    return np.gradient(a, t)
 
 
 def _robust_peak_count(x: np.ndarray) -> int:
-    m = _finite(x)
+    m = np.isfinite(x)
     x = np.abs(x[m])
     if len(x) < 5:
         return 0
@@ -186,116 +120,19 @@ def _robust_peak_count(x: np.ndarray) -> int:
     peaks, _ = find_peaks(x, height=thr, distance=max(1, len(x) // 200))
     return int(len(peaks))
 
+def _spectral_centroid_flatness_welch(x: np.ndarray, fs: float):
+    if len(x) < 32 or not np.isfinite(fs) or fs <= 0:
+        return np.nan, np.nan
 
-def _downsample_for_entropy(x: np.ndarray, max_points: int = 250) -> np.ndarray:
-    m = _finite(x)
-    x = x[m]
-    if len(x) <= 2:
-        return x
-    step = max(1, len(x) // max_points)
-    return x[::step]
-
-
-def _approximate_entropy(x: np.ndarray, m: int = 2, r: float | None = None) -> float:
-    x = _downsample_for_entropy(x)
-    n = len(x)
-    if n <= m + 1:
-        return np.nan
-    if r is None:
-        r = 0.2 * (np.std(x) + EPS)
-
-    def _phi(mm: int) -> float:
-        X = np.array([x[i : i + mm] for i in range(n - mm + 1)])
-        d = np.max(np.abs(X[:, None, :] - X[None, :, :]), axis=2)
-        C = np.mean(d <= r, axis=0)
-        return float(np.mean(np.log(C + EPS)))
-
-    return _phi(m) - _phi(m + 1)
-
-
-def _sample_entropy(x: np.ndarray, m: int = 2, r: float | None = None) -> float:
-    x = _downsample_for_entropy(x)
-    n = len(x)
-    if n <= m + 1:
-        return np.nan
-    if r is None:
-        r = 0.2 * (np.std(x) + EPS)
-
-    def _count(mm: int) -> int:
-        X = np.array([x[i : i + mm] for i in range(n - mm + 1)])
-        d = np.max(np.abs(X[:, None, :] - X[None, :, :]), axis=2)
-        np.fill_diagonal(d, np.inf)
-        return int(np.sum(d <= r))
-
-    B, A = _count(m), _count(m + 1)
-    if B == 0 or A == 0:
-        return np.nan
-    return float(-np.log((A + EPS) / (B + EPS)))
-
-
-def _permutation_entropy(x: np.ndarray, order: int = 3, delay: int = 1) -> float:
-    x = _downsample_for_entropy(x)
-    n = len(x)
-    if n < (order - 1) * delay + 2:
-        return np.nan
-    patterns: dict[tuple[int, ...], int] = {}
-    count = 0
-    for i in range(n - (order - 1) * delay):
-        window = x[i : i + order * delay : delay]
-        if not np.all(np.isfinite(window)):
-            continue
-        key = tuple(np.argsort(window))
-        patterns[key] = patterns.get(key, 0) + 1
-        count += 1
-    if count == 0:
-        return np.nan
-    p = np.array(list(patterns.values()), dtype=float) / float(count)
-    H = -np.sum(p * np.log(p + EPS))
-    Hmax = np.log(math.factorial(order))
-    return float(H / (Hmax + EPS))
-
-
-def _fft_band_energy_ratio(x: np.ndarray, fs_hz: float, f_lo: float, f_hi: float) -> tuple[float, float]:
-    m = _finite(x)
-    x = x[m]
-    if len(x) < 16 or not np.isfinite(fs_hz) or fs_hz <= 0:
-        return (np.nan, np.nan)
-    x = x - np.mean(x)
-    X = rfft(x)
-    pxx = (np.abs(X) ** 2) / len(x)
-    freqs = rfftfreq(len(x), d=1.0 / fs_hz)
-    valid = freqs > 0
-    freqs, pxx = freqs[valid], pxx[valid]
-    if len(freqs) == 0:
-        return (np.nan, np.nan)
-    band = (freqs >= f_lo) & (freqs <= f_hi)
-    band_energy = float(np.sum(pxx[band]))
-    total_energy = float(np.sum(pxx)) + EPS
-    return (band_energy, float(band_energy / total_energy))
-
-
-def _cross_corr_max(x: np.ndarray, y: np.ndarray, max_lag_samples: int) -> tuple[float, int]:
-    m = _finite(x) & _finite(y)
-    x, y = x[m], y[m]
-    if len(x) < 16 or len(y) != len(x):
-        return (np.nan, 0)
-    x, y = (x - np.mean(x)) / (np.std(x) + EPS), (y - np.mean(y)) / (np.std(y) + EPS)
-    best, best_lag = None, 0
-    for lag in range(-max_lag_samples, max_lag_samples + 1):
-        xs = x[:lag] if lag < 0 else x[lag:]
-        ys = y[-lag:] if lag < 0 else y[:-lag]
-        if lag == 0:
-            xs, ys = x, y
-        if len(xs) < 8:
-            continue
-        c = float(np.mean(xs * ys))
-        if best is None or abs(c) > abs(best):
-            best, best_lag = c, lag
-    return (float(best) if best is not None else np.nan, int(best_lag))
-
+    x = x - np.nanmean(x)
+    freqs, psd = welch(x, fs=fs, nperseg=min(256, len(x)))
+    psd = psd + 1e-12
+    centroid = np.sum(freqs * psd) / np.sum(psd)
+    flatness = np.exp(np.mean(np.log(psd))) / np.mean(psd)
+    return float(centroid), float(flatness)
 
 def _conditional_entropy_discrete(target: np.ndarray, cond: np.ndarray, bins: int = 10) -> float:
-    m = _finite(target) & _finite(cond)
+    m = np.isfinite(target) & np.isfinite(cond)
     t, c = target[m], cond[m]
     if len(t) < 50:
         return np.nan
@@ -319,7 +156,7 @@ def _conditional_entropy_discrete(target: np.ndarray, cond: np.ndarray, bins: in
 
 
 def _gas_to_brake_reaction_times(t: np.ndarray, gas: np.ndarray, brake: np.ndarray) -> np.ndarray:
-    m = _finite(t) & _finite(gas) & _finite(brake)
+    m = np.isfinite(t) & np.isfinite(gas) & np.isfinite(brake)
     t, gas, brake = t[m], gas[m], brake[m]
     if len(t) < 10:
         return np.array([], dtype=float)
@@ -357,7 +194,7 @@ def _choose_first_available(df: pd.DataFrame, cols: list[str]) -> str | None:
     return None
 
 
-def load_signals(csv_path: Path) -> Signals:
+def loadSignals(csv_path: Path) -> Signals:
     header = pd.read_csv(csv_path, nrows=0)
     cols = set(header.columns.tolist())
     vec_cols = [c for c in ["lin_acc", "rot_vel", "car0_vehicle_pos", "rrp_pos"] if c in cols]
@@ -374,19 +211,19 @@ def load_signals(csv_path: Path) -> Signals:
     df = pd.read_csv(csv_path, skiprows=[1], usecols=usecols, dtype=dtype, na_values=["-"], engine="python")
     if "timestamp" not in df.columns:
         raise ValueError(f"Missing timestamp column in {csv_path}")
-    t = _as_float_array(df["timestamp"])
+    t = _asFloatArray(df["timestamp"])
     order = np.argsort(t)
     t = t[order]
     steer_col = _choose_first_available(df, ["wheel_position"])
     if steer_col is None:
         raise ValueError(f"Missing wheel_position in {csv_path}")
-    steer = _as_float_array(df[steer_col])[order]
+    steer = _asFloatArray(df[steer_col])[order]
     gas_col = _choose_first_available(df, ["car0_throttle_position", "throttle"])
     brake_col = _choose_first_available(df, ["car0_brake_position", "brakes"])
-    gas = _as_float_array(df[gas_col])[order] if gas_col else np.full_like(t, np.nan)
-    brake = _as_float_array(df[brake_col])[order] if brake_col else np.full_like(t, np.nan)
+    gas = _asFloatArray(df[gas_col])[order] if gas_col else np.full_like(t, np.nan)
+    brake = _asFloatArray(df[brake_col])[order] if brake_col else np.full_like(t, np.nan)
     speed_col = _choose_first_available(df, ["car0_velocity_vehicle", "car0_velocity"])
-    speed = _as_float_array(df[speed_col])[order] if speed_col else None
+    speed = _asFloatArray(df[speed_col])[order] if speed_col else None
     lin_acc = _parse_vec3(df["lin_acc"])[order] if "lin_acc" in df.columns else None
     rot_vel = _parse_vec3(df["rot_vel"])[order] if "rot_vel" in df.columns else None
     lane_dev = None
@@ -444,7 +281,7 @@ def _iter_windows(t: np.ndarray, window_s: float, step_s: float, min_samples: in
     return out
 
 
-def extract_window_features(sig: Signals, i0: int, i1: int) -> dict[str, float]:
+def extractWindowFeatures(sig: Signals, i0: int, i1: int) -> dict[str, float]:
     t = sig.t[i0:i1]
     steer, gas, brake = sig.steer[i0:i1], sig.gas[i0:i1], sig.brake[i0:i1]
     if len(t) < 10:
@@ -452,35 +289,37 @@ def extract_window_features(sig: Signals, i0: int, i1: int) -> dict[str, float]:
     dt = np.diff(t)
     fs = float(1.0 / (np.median(dt[dt > 0]) + EPS)) if np.any(dt > 0) else np.nan
     out: dict[str, float] = {}
-    steer_jerk = _third_derivative(steer, t)
-    st = _nan_stats(steer_jerk)
-    out["steer_jerk_mean"], out["steer_jerk_std"] = st["mean"], st["std"]
-    out["steer_jerk_abs_q95"] = float(_nan_stats(np.abs(steer_jerk))["q95"])
+    steer_jerk = _thirdDerivative(steer, t)
+    out["steer_jerk_mean"] = float(np.nanmean(steer_jerk))
+    out["steer_jerk_std"] = float(np.nanstd(steer_jerk))
+    out["steer_jerk_abs_q95"] = float(np.nanquantile(np.abs(steer_jerk), 0.95))
     out["steer_jerk_extreme_peaks"] = float(_robust_peak_count(steer_jerk))
-    out["steer_sampen"] = _sample_entropy(steer)
-    out["steer_appen"] = _approximate_entropy(steer)
-    out["steer_permen"] = _permutation_entropy(steer, order=3, delay=1)
-    band_e, band_ratio = _fft_band_energy_ratio(steer, fs_hz=fs, f_lo=0.3, f_hi=1.0)
-    out["steer_hf_energy_0p3_1hz"], out["steer_hf_energy_ratio_0p3_1hz"] = band_e, band_ratio
+    out["steer_sampen"] = ant.sample_entropy(steer)
+    out["steer_appen"] = ant.app_entropy(steer)
+    out["steer_permen"] = ant.perm_entropy(steer, order=3, delay=1)
+    freqs, psd = welch(steer, fs=fs)
+    band = (freqs >= 0.3) & (freqs <= 1.0)
+    bandRatio = psd[band].sum() / psd.sum()
+    out["steer_hf_energy_0p3_1hz"], out["steer_hf_energy_ratio_0p3_1hz"] = band, bandRatio
     dsteer = np.diff(steer)
-    out["steer_delta_zero_crossings"] = float(_zero_crossings(dsteer))
+    out["steer_delta_zero_crossings"] = float(zero_crossings(dsteer))
     runlens = _run_lengths_between_sign_changes(dsteer)
     out["steer_mean_correction_len_samples"] = float(np.mean(runlens)) if len(runlens) else np.nan
     out["steer_std_correction_len_samples"] = float(np.std(runlens)) if len(runlens) else np.nan
     out["steer_mean_time_between_dir_changes_s"] = float(np.mean(runlens) / (fs + EPS)) if len(runlens) and np.isfinite(fs) else np.nan
     out["steer_path_len"] = float(np.nansum(np.abs(np.diff(steer))))
-    gas_jerk = _third_derivative(gas, t)
-    brk_jerk = _third_derivative(brake, t)
-    out["gas_jerk_std"] = float(_nan_stats(gas_jerk)["std"])
-    out["brake_jerk_std"] = float(_nan_stats(brk_jerk)["std"])
+    gas_jerk = _thirdDerivative(gas, t)
+    brk_jerk = _thirdDerivative(brake, t)
+    out["gas_jerk_std"] = float(np.nanstd(gas_jerk))
+    out["brake_jerk_std"] = float(np.nanstd(brk_jerk))
     out["gas_jerk_extreme_peaks"] = float(_robust_peak_count(gas_jerk))
     out["brake_jerk_extreme_peaks"] = float(_robust_peak_count(brk_jerk))
-    out["gas_sampen"] = _sample_entropy(gas)
-    out["gas_appen"] = _approximate_entropy(gas)
-    out["gas_permen"] = _permutation_entropy(gas, order=3, delay=1)
-    out["brake_sampen"] = _sample_entropy(brake)
-    out["brake_appen"] = _approximate_entropy(brake)
-    out["brake_permen"] = _permutation_entropy(brake, order=3, delay=1)
+    out["gas_sampen"] = ant.sample_entropy(gas)
+    out["gas_appen"] = ant.app_entropy(gas)
+    out["gas_permen"] = ant.perm_entropy(gas, order=3, delay=1)
+    out["brake_sampen"] = ant.sample_entropy(brake)
+    out["brake_appen"] = ant.app_entropy(brake)
+    out["brake_permen"] = ant.perm_entropy(brake, order=3, delay=1)
     rt = _gas_to_brake_reaction_times(t, gas, brake)
     out["gas_to_brake_rt_mean_s"] = float(np.mean(rt)) if len(rt) else np.nan
     out["gas_to_brake_rt_std_s"] = float(np.std(rt)) if len(rt) else np.nan
@@ -502,28 +341,29 @@ def extract_window_features(sig: Signals, i0: int, i1: int) -> dict[str, float]:
         acc_h = np.sqrt(acc[:, 0] ** 2 + acc[:, 2] ** 2)
         out["lin_acc_h_rms"] = float(np.sqrt(np.nanmean(acc_h * acc_h)))
         out["lin_acc_h_std"] = float(np.nanstd(acc_h))
-        out["lin_acc_h_permen"] = _permutation_entropy(acc_h, order=3, delay=1)
+        out["lin_acc_h_permen"] = ant.perm_entropy(acc_h, order=3, delay=1)
     else:
         out["lin_acc_h_rms"] = out["lin_acc_h_std"] = out["lin_acc_h_permen"] = np.nan
     if sig.rot_vel is not None:
         yaw_rate = sig.rot_vel[i0:i1][:, 1]
         out["yaw_rate_std"] = float(np.nanstd(yaw_rate))
-        out["yaw_rate_sampen"] = _sample_entropy(yaw_rate)
+        out["yaw_rate_sampen"] = ant.sample_entropy(yaw_rate)
     else:
         out["yaw_rate_std"] = out["yaw_rate_sampen"] = np.nan
     if sig.lane_dev is not None:
         ld = sig.lane_dev[i0:i1]
         out["lane_dev_var"] = float(np.nanvar(ld))
-        out["lane_dev_sampen"] = _sample_entropy(ld)
-        out["lane_dev_permen"] = _permutation_entropy(ld, order=3, delay=1)
+        out["lane_dev_sampen"] = ant.sample_entropy(ld)
+        out["lane_dev_permen"] = ant.perm_entropy(ld, order=3, delay=1)
         lane_rms = float(np.sqrt(np.nanmean(ld * ld)))
         out["correction_efficiency_steer_per_lane_rms"] = float(out["steer_path_len"] / (lane_rms + EPS))
         ld2 = ld.copy()
         ld2[np.abs(ld2) < np.nanquantile(np.abs(ld2), 0.2)] = 0.0
-        out["lane_overshoot_sign_changes"] = float(_zero_crossings(np.diff(ld2)))
+        out["lane_overshoot_sign_changes"] = float(zero_crossings(np.diff(ld2)))
         max_lag = int((2.0 * fs)) if np.isfinite(fs) else 0
-        c, lag = _cross_corr_max(steer, ld, max_lag_samples=max(1, max_lag))
-        out["steer_lane_xcorr_max"] = c
+        correlation = correlate(steer, ld, mode="full")
+        lag = np.argmax(np.abs(correlation)) - len(steer) + 1
+        out["steer_lane_xcorr_max"] = float(np.max(correlation))
         out["steer_lane_xcorr_lag_s"] = float(lag / (fs + EPS)) if np.isfinite(fs) else np.nan
         steer_l = steer[lag:] if lag > 0 else steer[:lag] if lag < 0 else steer
         ld_l = ld[:-lag] if lag > 0 else ld[-lag:] if lag < 0 else ld
@@ -533,15 +373,16 @@ def extract_window_features(sig: Signals, i0: int, i1: int) -> dict[str, float]:
                   "lane_overshoot_sign_changes", "steer_lane_xcorr_max", "steer_lane_xcorr_lag_s", "lane_given_steer_cond_entropy"]:
             out[k] = np.nan
     max_lag = int((2.0 * fs)) if np.isfinite(fs) else 0
-    c_gs, lag_gs = _cross_corr_max(gas, steer, max_lag_samples=max(1, max_lag))
-    out["gas_steer_xcorr_max"] = c_gs
+    correlation_gs = correlate(gas, steer, mode="full")
+    lag_gs = np.argmax(np.abs(correlation_gs)) - len(gas) + 1
+    out["gas_steer_xcorr_max"] = float(np.max(correlation_gs))
     out["gas_steer_xcorr_lag_s"] = float(lag_gs / (fs + EPS)) if np.isfinite(fs) else np.nan
     out["fs_hz_est"] = fs
     out["window_samples"] = float(len(t))
     return out
 
 
-def extract_window_features_custom2(sig: Signals, i0: int, i1: int) -> dict[str, float]:
+def extractWindowFeaturesCustom2(sig: Signals, i0: int, i1: int) -> dict[str, float]:
     t = sig.t[i0:i1]
     steer, gas, brake = sig.steer[i0:i1], sig.gas[i0:i1], sig.brake[i0:i1]
     if len(t) < 10:
@@ -558,8 +399,8 @@ def extract_window_features_custom2(sig: Signals, i0: int, i1: int) -> dict[str,
     out["steer_range"] = float(np.nanmax(steer) - np.nanmin(steer))
     out["gas_mean"], out["gas_std"] = float(np.nanmean(gas)), float(np.nanstd(gas))
     out["brake_mean"], out["brake_std"] = float(np.nanmean(brake)), float(np.nanstd(brake))
-    steer_rate = _gradient(steer, t)
-    steer_acc = _gradient(steer_rate, t)
+    steer_rate = np.gradient(steer, t)
+    steer_acc = np.gradient(steer_rate, t)
     out["steer_rate_abs_mean"] = float(np.nanmean(np.abs(steer_rate)))
     out["steer_rate_abs_q95"] = float(np.nanquantile(np.abs(steer_rate), 0.95))
     out["steer_rate_std"] = float(np.nanstd(steer_rate))
@@ -574,7 +415,7 @@ def extract_window_features_custom2(sig: Signals, i0: int, i1: int) -> dict[str,
     out["steer_reversal_rate_per_s"] = float(reversals / (dur + EPS)) if np.isfinite(dur) and dur > 0 else np.nan
     active_thr = float(np.nanquantile(np.abs(steer_rate), 0.7)) if len(steer_rate) > 5 else np.nan
     out["steer_active_ratio"] = float(np.nanmean(np.abs(steer_rate) > (active_thr + EPS))) if np.isfinite(active_thr) else np.nan
-    out["steer_rate_spec_centroid_hz"], out["steer_rate_spec_flatness"] = _spectral_centroid_flatness(steer_rate, fs_hz=fs)
+    out["steer_rate_spec_centroid_hz"], out["steer_rate_spec_flatness"] = _spectral_centroid_flatness_welch(steer_rate, fs)
     wav = _wavelet_energy_ratios(steer_rate)
     out["steer_rate_wav_d1_ratio"], out["steer_rate_wav_d2_ratio"], out["steer_rate_wav_d3_ratio"] = wav["wav_d1_ratio"], wav["wav_d2_ratio"], wav["wav_d3_ratio"]
     gas_thr, brake_thr = 0.05, 0.05
@@ -591,7 +432,7 @@ def extract_window_features_custom2(sig: Signals, i0: int, i1: int) -> dict[str,
     out["pedal_state_transitions_per_s"] = float(ntr / (dur + EPS)) if np.isfinite(dur) and dur > 0 else np.nan
     out["trans_gas_to_brake"] = float(tm[1, 2] + tm[1, 3])
     out["trans_brake_to_gas"] = float(tm[2, 1] + tm[2, 3])
-    brake_rate = _gradient(brake, t)
+    brake_rate = np.gradient(brake, t)
     out["brake_rate_max"] = float(np.nanmax(brake_rate))
     out["brake_rate_q95"] = float(np.nanquantile(brake_rate, 0.95))
     onsets = int(np.sum((~brake_on[:-1]) & (brake_on[1:])))
@@ -616,8 +457,8 @@ def extract_window_features_custom2(sig: Signals, i0: int, i1: int) -> dict[str,
         yw = yaw[i0:i1]
         out["yaw_rate_std"] = float(np.nanstd(yw))
         out["yaw_rate_abs_mean"] = float(np.nanmean(np.abs(yw)))
-        out["corr_steer_yaw"] = _corr(steer, yw)
-        out["corr_steer_rate_yaw"] = _corr(steer_rate, yw)
+        out["corr_steer_yaw"] = corr(steer, yw)
+        out["corr_steer_rate_yaw"] = corr(steer_rate, yw)
         if speed is not None:
             sp = speed[i0:i1]
             curv = np.abs(yw) / (sp + 0.5)
@@ -632,19 +473,19 @@ def extract_window_features_custom2(sig: Signals, i0: int, i1: int) -> dict[str,
         acc_mag = np.sqrt(np.nansum(acc * acc, axis=1))
         out["acc_mag_rms"] = float(np.sqrt(np.nanmean(acc_mag * acc_mag)))
         out["acc_mag_q95"] = float(np.nanquantile(acc_mag, 0.95))
-        out["corr_gas_accmag"] = _corr(gas, acc_mag)
-        out["corr_brake_accmag"] = _corr(brake, acc_mag)
+        out["corr_gas_accmag"] = corr(gas, acc_mag)
+        out["corr_brake_accmag"] = corr(brake, acc_mag)
     else:
         out["acc_mag_rms"] = out["acc_mag_q95"] = out["corr_gas_accmag"] = out["corr_brake_accmag"] = np.nan
     return out
 
 
-def extract_features_for_recording(csv_path: Path, driver_id: str, window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
-    sig = load_signals(csv_path)
+def extractFeaturesForRecording(csv_path: Path, driver_id: str, window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
+    sig = loadSignals(csv_path)
     rows: list[dict[str, Any]] = []
     windows = _iter_windows(sig.t, window_s=window_s, step_s=step_s, min_samples=min_samples)
     for i0, i1, s, e in windows:
-        feats = extract_window_features(sig, i0, i1)
+        feats = extractWindowFeatures(sig, i0, i1)
         if not feats:
             continue
         feats["driver_id"] = driver_id
@@ -655,12 +496,12 @@ def extract_features_for_recording(csv_path: Path, driver_id: str, window_s: flo
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
-def extract_features_for_recording_custom2(csv_path: Path, driver_id: str, window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
-    sig = load_signals(csv_path)
+def extractFeaturesForRecordingCustom2(csv_path: Path, driver_id: str, window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
+    sig = loadSignals(csv_path)
     rows: list[dict[str, Any]] = []
     windows = _iter_windows(sig.t, window_s=window_s, step_s=step_s, min_samples=min_samples)
     for i0, i1, s, e in windows:
-        feats = extract_window_features_custom2(sig, i0, i1)
+        feats = extractWindowFeaturesCustom2(sig, i0, i1)
         if not feats:
             continue
         feats["driver_id"] = driver_id
@@ -693,7 +534,7 @@ def _tsfresh_long_dataframe(sig: Signals, windows: list[tuple[int, int, float, f
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["id", "time", "kind", "value"])
 
 
-def extract_features_auto_tsfresh(
+def extractFeaturesAutoTsfresh(
     csv_path: Path,
     driver_id: str,
     window_s: float,
@@ -703,14 +544,13 @@ def extract_features_auto_tsfresh(
     fc_params: str = "efficient",
     n_jobs: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    sig = load_signals(csv_path)
+    sig = loadSignals(csv_path)
     windows = _iter_windows(sig.t, window_s=window_s, step_s=step_s, min_samples=min_samples)
     if not windows:
         return (pd.DataFrame(), pd.DataFrame())
     long_df = _tsfresh_long_dataframe(sig, windows, window_id_offset=window_id_offset)
     if long_df.empty:
         return (pd.DataFrame(), pd.DataFrame())
-
     params = EfficientFCParameters() if fc_params.lower().strip() == "efficient" else MinimalFCParameters()
     feats = ts_extract_features(long_df, column_id="id", column_sort="time", column_kind="kind", column_value="value",
                                 default_fc_parameters=params, n_jobs=int(n_jobs), disable_progressbar=True)
@@ -718,7 +558,7 @@ def extract_features_auto_tsfresh(
     meta_rows = [{"id": window_id_offset + w_i, "driver_id": driver_id, "recording": csv_path.name,
                   "window_start_s": ws, "window_end_s": we} for w_i, (_i0, _i1, ws, we) in enumerate(windows)]
     meta = pd.DataFrame(meta_rows).set_index("id")
-    return feats, meta
+    return pd.DataFrame(feats), meta
 
 
 def _safe_col(s: str) -> str:
@@ -731,7 +571,7 @@ def _sample_indices(n: int, max_n: int) -> np.ndarray:
     return np.linspace(0, n - 1, max_n, dtype=int)
 
 
-def extract_featuretools_features_for_csvs(
+def extractFeaturetoolsFeaturesForCsvs(
     csv_paths: list[Path],
     window_s: float,
     step_s: float,
@@ -740,13 +580,17 @@ def extract_featuretools_features_for_csvs(
     max_depth: int = 1,
     driver_ids: list[str] | None = None,
 ) -> pd.DataFrame:
+    try:
+        import featuretools as ft  # type: ignore
+    except Exception as e:
+        raise RuntimeError("featuretools is not installed. Install via: pip install featuretools") from e
     if driver_ids is not None and len(driver_ids) != len(csv_paths):
         raise ValueError("driver_ids must have the same length as csv_paths (or be None).")
     windows_rows: list[dict[str, Any]] = []
     obs_rows: list[dict[str, Any]] = []
     next_window_id = 0
     for i, csv_path in enumerate(csv_paths):
-        sig = load_signals(csv_path)
+        sig = loadSignals(csv_path)
         yaw = _compute_yaw_rate(sig)
         did = driver_ids[i] if driver_ids is not None else "unknown"
         windows = _iter_windows(sig.t, window_s=window_s, step_s=step_s, min_samples=min_samples)
@@ -811,10 +655,10 @@ def infer_driver_id_from_filename(p: Path) -> str:
     raise ValueError(f"Could not infer driver_id from filename: {p.name}")
 
 
-def extract_handcrafted(csv_paths: list[Path], driver_ids: list[str], window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
+def extractHandcrafted(csv_paths: list[Path], driver_ids: list[str], window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
     all_dfs: list[pd.DataFrame] = []
     for p, did in zip(csv_paths, driver_ids, strict=True):
-        df = extract_features_for_recording(p, driver_id=did, window_s=window_s, step_s=step_s, min_samples=min_samples)
+        df = extractFeaturesForRecording(p, driver_id=did, window_s=window_s, step_s=step_s, min_samples=min_samples)
         if not df.empty:
             all_dfs.append(df)
     return pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
@@ -823,7 +667,7 @@ def extract_handcrafted(csv_paths: list[Path], driver_ids: list[str], window_s: 
 def extract_custom2(csv_paths: list[Path], driver_ids: list[str], window_s: float, step_s: float, min_samples: int) -> pd.DataFrame:
     all_dfs: list[pd.DataFrame] = []
     for p, did in zip(csv_paths, driver_ids, strict=True):
-        df = extract_features_for_recording_custom2(p, driver_id=did, window_s=window_s, step_s=step_s, min_samples=min_samples)
+        df = extractFeaturesForRecordingCustom2(p, driver_id=did, window_s=window_s, step_s=step_s, min_samples=min_samples)
         if not df.empty:
             all_dfs.append(df)
     return pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
@@ -843,7 +687,7 @@ def extract_auto(
     all_meta: list[pd.DataFrame] = []
     wid_offset = 0
     for p, did in zip(csv_paths, driver_ids, strict=True):
-        feats, meta = extract_features_auto_tsfresh(p, driver_id=did, window_s=window_s, step_s=step_s, min_samples=min_samples,
+        feats, meta = extractFeaturesAutoTsfresh(p, driver_id=did, window_s=window_s, step_s=step_s, min_samples=min_samples,
                                                     window_id_offset=wid_offset, fc_params=auto_params, n_jobs=tsfresh_n_jobs)
         if feats.empty or meta.empty:
             continue
@@ -857,10 +701,7 @@ def extract_auto(
     y = meta["driver_id"].astype(str)
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     if auto_select:
-        try:
-            X = ts_select_features(X, pd.factorize(y.astype(str))[0])
-        except Exception:
-            pass
+        X = ts_select_features(X, pd.factorize(y.astype(str))[0])
     return pd.concat([meta.reset_index(drop=True), X.reset_index(drop=True)], axis=1)
 
 
@@ -873,7 +714,7 @@ def extract_featuretools(
     max_obs_per_window: int = 500,
     max_depth: int = 1,
 ) -> pd.DataFrame:
-    return extract_featuretools_features_for_csvs(
+    return extractFeaturetoolsFeaturesForCsvs(
         csv_paths=csv_paths, window_s=window_s, step_s=step_s, min_samples=min_samples,
         max_obs_per_window=max_obs_per_window, max_depth=max_depth, driver_ids=driver_ids,
     )
@@ -907,6 +748,9 @@ def select_top_features(
     n_repeats: int = 1,
     n_estimators: int = 900,
 ) -> pd.DataFrame:
+    from sklearn.ensemble import ExtraTreesClassifier
+    from sklearn.impute import SimpleImputer
+    from sklearn.model_selection import StratifiedGroupKFold
     meta = df[KEY_COLS].copy()
     meta["group_id"] = meta["driver_id"].astype(str) + "::" + meta["recording"].astype(str)
     y = meta["driver_id"].astype(str)
@@ -946,6 +790,8 @@ def plot_raw_sensor_correlation_heatmap(
     max_features: int = 50,
     max_rows_total: int = 15000,
 ) -> None:
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
     def _load_raw():
         dfs = []
@@ -985,7 +831,7 @@ def plot_raw_sensor_correlation_heatmap(
     plt.close()
 
 
-def load_or_extract_features(
+def loadOrExtractFeatures(
     root: Path,
     features_dir: Path,
     plots_dir: Path,
@@ -1019,7 +865,7 @@ def load_or_extract_features(
     data_dir_resolved = (data_dir if data_dir.is_absolute() else root / data_dir).resolve() if extract_from_raw or holdout_file else None
     if holdout_file is not None and data_dir_resolved:
         h_path = holdout_file if holdout_file.is_absolute() else root / holdout_file
-        holdout_paths, holdout_driver_ids = load_holdout_file(h_path, base_dir=data_dir_resolved)
+        holdout_paths, holdout_driver_ids = loadHoldoutFile(h_path, base_dir=data_dir_resolved)
         holdout_paths_set = {p.resolve() for p in holdout_paths}
         n_labeled = sum(1 for d in holdout_driver_ids if d != "__unlabeled__")
         print(f"[holdout] {len(holdout_paths)} Recordings ({n_labeled} mit Label)")
@@ -1030,7 +876,7 @@ def load_or_extract_features(
 
         if labels_file is not None:
             lbl_path = labels_file if labels_file.is_absolute() else root / labels_file
-            all_paths, all_ids = load_labels_file(lbl_path, base_dir=data_dir)
+            all_paths, all_ids = loadLabelFile(lbl_path, base_dir=data_dir)
             if holdout_paths_set:
                 csv_paths = [p for p in all_paths if p.resolve() not in holdout_paths_set]
                 driver_ids = [d for p, d in zip(all_paths, all_ids) if p.resolve() not in holdout_paths_set]
@@ -1051,7 +897,7 @@ def load_or_extract_features(
             (plots_dir / "raw").mkdir(parents=True, exist_ok=True)
             plot_raw_sensor_correlation_heatmap(csv_paths, plots_dir / "raw" / "raw_sensor_correlation.png")
 
-        for name, fn in [("FSChatGPT", extract_handcrafted), ("FSGemini", extract_custom2)]:
+        for name, fn in [("FSChatGPT", extractHandcrafted), ("FSGemini", extract_custom2)]:
             if _want(name):
                 p = features_dir / f"features_daten_{name}.csv"
                 if p.exists() and not force:
@@ -1103,7 +949,7 @@ def load_or_extract_features(
                 features_by_name["selected"] = sel
 
         if holdout_paths_set and holdout_paths:
-            for name, fn in [("FSChatGPT", extract_handcrafted), ("FSGemini", extract_custom2)]:
+            for name, fn in [("FSChatGPT", extractHandcrafted), ("FSGemini", extract_custom2)]:
                 if _want(name):
                     df_h = fn(holdout_paths, holdout_driver_ids, window_s, step_s, min_samples)
                     if not df_h.empty:

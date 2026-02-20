@@ -27,8 +27,9 @@ def main():
 
     labels["run"] = labels.groupby("driver").cumcount() # Durchlaufs-ID (run-id) hinzufügen
     
-    predictions, distances, compactness, centroidDists = identifyDriversCLI(labels.to_dict(orient="records"))
-    displayResults(labels, predictions, distances, compactness, centroidDists)
+    identifyDriversCLI(labels.to_dict(orient="records"))
+    #predictions, distances, compactness, centroidDists = identifyDriversCLI(labels.to_dict(orient="records"))
+    #displayResults(labels, predictions, distances, compactness, centroidDists)
 
     
 

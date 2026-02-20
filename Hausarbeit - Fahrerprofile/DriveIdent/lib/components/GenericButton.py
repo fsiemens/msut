@@ -9,9 +9,9 @@ class GenericButton(tk.Button):
             text=text, 
             width=styleConfig["buttonWidth"] if width < 0 else width,
             height=styleConfig["buttonHeight"] if height < 0 else height, 
-            command=command, 
-            relief=styleConfig["buttonRelief"], 
-            bg=styleConfig["colors"]["buttonBg"], 
-            fg=styleConfig["colors"]["buttonFg"],
-            font=styleConfig["font"]["buttonText"]
+            command=command,
+            #relief=styleConfig["buttonRelief"], 
+            #bg=styleConfig["colors"]["buttonBg"], 
+            #fg=styleConfig["colors"]["buttonFg"],
+            #font=styleConfig["font"]["buttonText"]
         )

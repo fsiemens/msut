@@ -1,0 +1,12 @@
+# Abhängigkeiten (Projektroot oder pipeline_minimal_beispiel)
+numpy
+pandas
+scipy
+scikit-learn
+joblib
+matplotlib
+seaborn
+tsfresh
+PyWavelets
+featuretools
+openpyxl

@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.tree import plot_tree
-from sklearn.feature_selection import f_classif
 
 
 def _get_inner_estimator(pipe) -> Any:
@@ -21,6 +18,10 @@ def _get_inner_estimator(pipe) -> Any:
 
 
 def plot_tree_model(pipe, feature_names: list[str], labels: list[str], out_path: Path, title: str = "Entscheidungsbaum", max_depth: int = 5) -> None:
+    try:
+        from sklearn.tree import plot_tree
+    except ImportError:
+        return
     inner = _get_inner_estimator(pipe)
     if inner is None:
         return
@@ -87,6 +88,7 @@ def plot_decision_boundary_2d_generic(pipe, X: pd.DataFrame, y: pd.Series, featu
     if len(numeric_cols) < 2:
         return
     try:
+        from sklearn.feature_selection import f_classif
         X_num = X[numeric_cols].fillna(X[numeric_cols].median())
         _, scores = f_classif(X_num, y)
         idx = np.argsort(scores)[-2:][::-1]

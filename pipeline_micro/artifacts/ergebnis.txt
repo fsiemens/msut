@@ -1,2 +1,0 @@
-randomforest: 83.33%
-logreg: 83.33%
