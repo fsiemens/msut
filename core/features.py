@@ -43,7 +43,14 @@ def extract_features(paths, ids, feature_set=config.FEATURE_SET, on_extraction_s
         es = ft.EntitySet(id="f").add_dataframe(dataframe_name="f", dataframe=win_df, index="window_id").add_dataframe(dataframe_name="b", dataframe=obs_df, index="obs_id", time_index="time").add_relationship("f", "window_id", "b", "window_id")
         # Aggregationen: mean, std, min, max, sum, skew, kurtosis pro Fenster
         fm, _ = ft.dfs(entityset=es, target_dataframe_name="f", agg_primitives=["mean", "std", "min", "max", "sum", "skew", "kurtosis"], trans_primitives=[], max_depth=1, verbose=False)
-        result_ft : pd.DataFrame = win_df.merge(fm.reset_index(), on="window_id", how="left").drop(columns=["window_id"])
+        # ft.dfs enthält typischerweise auch die Originalspalten aus win_df (driver_id/recording).
+        # Beim Merge entstehen sonst doppelte Spalten (driver_id_x/driver_id_y), die später
+        # fälschlich als Features in feat_cols landen und zu "Dimension mismatch" führen.
+        fm_reset = fm.reset_index()
+        for col in ("driver_id", "recording"):
+            if col in fm_reset.columns:
+                fm_reset = fm_reset.drop(columns=[col])
+        result_ft : pd.DataFrame = win_df.merge(fm_reset, on="window_id", how="left").drop(columns=["window_id"])
         # Spaltennamen bereinigen (sonderzeichen entfernen)
         result_ft.columns = ["".join(c if (c.isalnum() or c in "_-") else "_" for c in str(x)) for x in result_ft.columns]
         for c in result_ft.columns:

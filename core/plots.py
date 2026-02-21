@@ -26,6 +26,28 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
+def _align_feat_cols(pipe, feat_cols: list[str], imp: np.ndarray) -> list[str]:
+    """
+    Versucht feat_cols an die tatsächlich im Modell genutzten Features anzupassen.
+
+    Falls beim Featuretools-Merge doppelte Spalten wie driver_id_x/driver_id_y entstehen,
+    werden diese in der Pipeline (z.B. SimpleImputer) effektiv entfernt. Dann gilt
+    len(imp) != len(feat_cols) und die Importance-Plots würden leer bleiben.
+    """
+    try:
+        if len(imp) == len(feat_cols):
+            return feat_cols
+        imputer = getattr(pipe, "named_steps", {}).get("imputer") if pipe is not None else None
+        stats = getattr(imputer, "statistics_", None)
+        if stats is None or len(stats) != len(feat_cols):
+            return feat_cols
+        keep_mask = np.isfinite(stats)
+        aligned = [c for c, keep in zip(feat_cols, keep_mask) if bool(keep)]
+        return aligned if len(aligned) == len(imp) else feat_cols
+    except Exception:
+        return feat_cols
+
+
 def plot_confusion_matrix(
     y_true: list | np.ndarray,
     y_pred: list | np.ndarray,
@@ -93,11 +115,12 @@ def plot_feature_importance(
             imp = np.abs(clf.coef_).mean(axis=0)
         else:
             return None
-        if len(imp) != len(feat_cols):
+        feat_cols_aligned = _align_feat_cols(pipe, feat_cols, imp)
+        if len(imp) != len(feat_cols_aligned):
             return None
         idx = np.argsort(imp)[::-1][:30]  # Top 30
         imp_sorted = imp[idx]
-        names_sorted = [feat_cols[i] for i in idx]
+        names_sorted = [feat_cols_aligned[i] for i in idx]
         fig, ax = plt.subplots(figsize=(10, 8))
         ax.barh(range(len(names_sorted)), imp_sorted, color="steelblue", alpha=0.8)
         ax.set_yticks(range(len(names_sorted)))
@@ -189,12 +212,13 @@ def plot_feature_importance_all_models(
             else:
                 ax.set_title(f"{mdl} – keine Importance")
                 continue
-            if len(imp) != len(feat_cols):
+            feat_cols_aligned = _align_feat_cols(pipe, feat_cols, imp)
+            if len(imp) != len(feat_cols_aligned):
                 ax.set_title(f"{mdl} – Dimension mismatch")
                 continue
             idx = np.argsort(imp)[::-1][:top_n]
             imp_sorted = imp[idx]
-            names_sorted = [feat_cols[i] for i in idx]
+            names_sorted = [feat_cols_aligned[i] for i in idx]
             ax.barh(range(len(names_sorted)), imp_sorted, color="steelblue", alpha=0.8)
             ax.set_yticks(range(len(names_sorted)))
             ax.set_yticklabels(names_sorted, fontsize=8)

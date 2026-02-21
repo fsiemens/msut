@@ -7,7 +7,7 @@ Schnittstelle für ein Tkinter-Frontend zur Fahrererkennung (projekt_mini).
 ## 1. Übersicht
 
 Das Backend bietet:
-- **Training** von RandomForest- und LogisticRegression-Modellen
+- **Training** von RandomForest-, LogisticRegression- und GradientBoosting-Modellen
 - **Vorhersage** mit trainierten Modellen
 - **Label-Verwaltung** (Lesen/Schreiben von Trainings- und Test-Labels)
 - **Pipeline-Fortschritt** (`pipeline_progress.json`) für Status-Anzeige im Frontend
@@ -34,7 +34,7 @@ from backend_api import train, predict, write_labels_file, get_config
 
 ### 3.1 `train()`
 
-Trainiert die Modelle (RandomForest, LogisticRegression) auf den angegebenen Daten.
+Trainiert die Modelle (RandomForest, LogisticRegression, GradientBoosting) auf den angegebenen Daten.
 
 **Signatur:**
 ```python
@@ -62,7 +62,7 @@ def train(
 | `log_callback` | `(str) -> None` oder `None` | Optional: wird mit Log-Zeilen aufgerufen      |
 
 **Rückgabe:**
-- `(True, "randomforest: 88.24%\nlogreg: 94.12%\n...")` bei Erfolg
+- `(True, "randomforest: 88.24%\nlogreg: 94.12%\ngradientboosting: 91.05%...")` bei Erfolg
 - `(False, "Fehlermeldung")` bei Fehler
 
 **Hinweis:** Training kann 30–60 Sekunden dauern. In einem GUI-Thread blockierend ausführen oder in einem separaten Thread starten.
@@ -84,7 +84,7 @@ def predict(
     """
     Returns:
         (erfolg: bool, ausgabe: str, ergebnisse: dict[str, list[dict]])
-        - ergebnisse: {"randomforest": [...], "logreg": [...]}
+        - ergebnisse: {"randomforest": [...], "logreg": [...], "gradientboosting": [...]}
         - Jede Liste: [{"recording": str, "soll": str, "ist": str, "korrekt": bool}, ...]
     """
 ```
@@ -151,7 +151,7 @@ def get_config() -> dict:
             "labels_file": Path,
             "test_labels_file": Path,
             "artifacts_dir": Path,
-            "models": ["randomforest", "logreg"],
+            "models": ["randomforest", "logreg", "gradientboosting"],
             "window_sec": 25,
             "step_sec": 12,
         }

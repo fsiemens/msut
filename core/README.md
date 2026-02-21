@@ -1,6 +1,6 @@
 # projekt_mini – Fahrererkennung
 
-Fahrererkennung anhand von Fahrsimulator-Daten. Das System klassifiziert den Fahrer (florian, matthias, fabian) aus CSV-Recordings mittels maschinellem Lernen (RandomForest, LogisticRegression).
+Fahrererkennung anhand von Fahrsimulator-Daten. Das System klassifiziert den Fahrer (florian, matthias, fabian) aus CSV-Recordings mittels maschinellem Lernen (RandomForest, LogisticRegression, GradientBoosting).
 
 ---
 
@@ -24,7 +24,7 @@ Fahrererkennung anhand von Fahrsimulator-Daten. Das System klassifiziert den Fah
 
 | Funktion | Beschreibung |
 |----------|--------------|
-| **Training** | Trainiert RandomForest und LogisticRegression auf gelabelten Recordings |
+| **Training** | Trainiert RandomForest, LogisticRegression und GradientBoosting auf gelabelten Recordings |
 | **Vorhersage** | Klassifiziert unbekannte Recordings mit trainierten Modellen |
 | **Label-Verwaltung** | Erstellen und Lesen von Label-Dateien (File ↔ Fahrer) |
 | **Pipeline-Fortschritt** | `pipeline_progress.json` für Frontend-Statusanzeige (Polling) |
@@ -33,7 +33,7 @@ Fahrererkennung anhand von Fahrsimulator-Daten. Das System klassifiziert den Fah
 ### Technik
 
 - **Features:** Featuretools (Aggregationen) + TSFresh (Zeitreihen-Features)
-- **Modelle:** RandomForest, LogisticRegression
+- **Modelle:** RandomForest, LogisticRegression, GradientBoosting
 - **Validierung:** StratifiedGroupKFold (Recordings bleiben zusammen, keine Datenleckage)
 - **Fenster:** 25 Sekunden, Schrittweite 12 Sekunden
 
@@ -204,7 +204,7 @@ Optional im Projekt-Root. Beispiel:
   "labels_file": "labels.lbl",
   "test_labels_file": "test_labels.lbl",
   "artifacts_dir": "artifacts",
-  "models": ["randomforest", "logreg"],
+  "models": ["randomforest", "logreg", "gradientboosting"],
   "feature_set": "both",
   "window_sec": 25,
   "step_sec": 12,
