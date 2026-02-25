@@ -2,11 +2,15 @@
 """
 Modul: features
 ===============
-Feature-Extraktion für die Fahrererkennung. Nutzt Featuretools (Aggregationen über
-Beobachtungen pro Fenster) und/oder TSFresh (Zeitreihen-Features). Beide Ansätze
-erzeugen einen Feature-Vektor pro Fenster (window_id) mit driver_id und recording.
+Feature-Extraktion für die Fahrererkennung. Wandelt Fenster-Zeitreihen in eine
+tabellarische Repräsentation um, die für ML-Modelle geeignet ist.
 
-feature_set: "featuretools" | "tsfresh" | "both"
+- Featuretools: Aggregationen (mean, std, min, max, sum, skew, kurtosis) pro Fenster
+- TSFresh: Zeitreihen-spezifische Kennwerte (MinimalFCParameters)
+- feature_set: "featuretools" | "tsfresh" | "both"
+
+Wichtig: driver_id und recording werden vor dem Merge mit Featuretools-Output
+entfernt, um doppelte Spalten (driver_id_x/y) und Dimension-Mismatch in Plots zu vermeiden.
 """
 import numpy as np
 import pandas as pd
@@ -40,6 +44,7 @@ def extract_features(paths, ids, feature_set=config.FEATURE_SET, on_extraction_s
     if feature_set in ("featuretools", "both"):
         # EntitySet: Fenster (f) mit Beobachtungen (b) verknüpft über window_id
         obs_df = pd.DataFrame(obs_rows)
+        # Aggregationen pro Fenster über steer, gas, brake, speed, yaw_rate
         es = ft.EntitySet(id="f").add_dataframe(dataframe_name="f", dataframe=win_df, index="window_id").add_dataframe(dataframe_name="b", dataframe=obs_df, index="obs_id", time_index="time").add_relationship("f", "window_id", "b", "window_id")
         # Aggregationen: mean, std, min, max, sum, skew, kurtosis pro Fenster
         fm, _ = ft.dfs(entityset=es, target_dataframe_name="f", agg_primitives=["mean", "std", "min", "max", "sum", "skew", "kurtosis"], trans_primitives=[], max_depth=1, verbose=False)
@@ -51,14 +56,14 @@ def extract_features(paths, ids, feature_set=config.FEATURE_SET, on_extraction_s
             if col in fm_reset.columns:
                 fm_reset = fm_reset.drop(columns=[col])
         result_ft : pd.DataFrame = win_df.merge(fm_reset, on="window_id", how="left").drop(columns=["window_id"])
-        # Spaltennamen bereinigen (sonderzeichen entfernen)
+        # Spaltennamen bereinigen (Sonderzeichen entfernen für sklearn-Kompatibilität)
         result_ft.columns = ["".join(c if (c.isalnum() or c in "_-") else "_" for c in str(x)) for x in result_ft.columns]
         for c in result_ft.columns:
             if c not in ("driver_id", "recording"): result_ft[c] = pd.to_numeric(result_ft[c], errors="coerce")
         result_ft["driver_id"], result_ft["recording"] = win_df["driver_id"].values, win_df["recording"].values
 
     if feature_set in ("tsfresh", "both"):
-        # TSFresh erwartet Long-Format: id, time, kind, value
+        # TSFresh erwartet Long-Format: id (Fenster), time, kind (Signal), value
         ts_rows, wid = [], 0
         for i, p in enumerate(paths):
             d = load_csv(p)
@@ -68,11 +73,12 @@ def extract_features(paths, ids, feature_set=config.FEATURE_SET, on_extraction_s
                     ts_rows.append(pd.DataFrame({"id": wid, "time": rel_t, "kind": sig, "value": arr[i0:i1]}))
                 wid += 1
         if ts_rows:
+            # TSFresh: Impute fehlende Werte, Inf/NaN bereinigen
             ts_feat = tsfresh_impute(tsfresh_extract(pd.concat(ts_rows, ignore_index=True), column_id="id", column_sort="time", column_kind="kind", column_value="value", default_fc_parameters=MinimalFCParameters(), n_jobs=0, disable_progressbar=True)).replace([np.inf, -np.inf], np.nan).fillna(0)
             result_ts : pd.DataFrame = win_df[["driver_id", "recording"]].copy()
             for c in ts_feat.columns: result_ts[c] = ts_feat[c].values
 
-    # Ergebnis aus beiden Quellen zusammensetzen (bei "both")
+    # Ergebnis: bei "both" Featuretools + TSFresh kombinieren, sonst nur eine Quelle
     result : pd.DataFrame = result_ft.copy() if feature_set == "both" else (result_ts if feature_set == "tsfresh" else result_ft)
     if feature_set == "both":
         for c in result_ts.columns:

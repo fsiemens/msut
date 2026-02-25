@@ -2,18 +2,23 @@
 """
 Modul: config
 =============
-Zentrale Konfiguration für das Fahrererkennungs-Projekt. Lädt Einstellungen aus
-config.json (falls vorhanden), sonst werden Standardwerte verwendet. Die Funktion
-apply_overrides() erlaubt das Überschreiben von Werten (z.B. aus CLI oder GUI).
+Zentrale Konfiguration für die Fahrererkennungs-Pipeline. Bündelt alle Parameter,
+die den Lauf von Training und Vorhersage steuern (Pfade, Fensterparameter, Modellliste,
+Feature-Set, Cross-Validation, GridSearch).
+
+- Lädt Einstellungen aus config.json beim Import (falls vorhanden)
+- apply_overrides() überschreibt Werte zur Laufzeit (CLI, GUI)
+- Standardwerte gelten, wenn keine config.json existiert
 
 Verwendung:
     from . import config
+    config.apply_overrides(data_dir="data", cv_splits=5)
 """
 import json
 import sys
 from pathlib import Path
 
-# Projekt-Root für relativen Pfad zu config.json
+# Projekt-Root für relativen Pfad zu config.json (PyInstaller vs. normaler Lauf)
 if getattr(sys, "frozen", False):
     _PROJ = Path(sys.executable).parent
 else:
@@ -49,7 +54,7 @@ def _load_from_file(path=None):
         return
     with open(cfg_path, encoding="utf-8") as f:
         d = json.load(f)
-    # Nur vorhandene Keys überschreiben
+    # Nur vorhandene Keys überschreiben – fehlende bleiben bei Standardwerten
     if "data_dir" in d: DATA_DIR = Path(d["data_dir"])
     if "labels_file" in d: LABELS_FILE = Path(d["labels_file"])
     if "test_labels_file" in d: TEST_LABELS_FILE = Path(d["test_labels_file"])

@@ -2,8 +2,11 @@
 """
 Modul: progress
 ===============
-Schreibt pipeline_progress.json für Frontend-Polling (gleiches Format wie pipeline_project).
-Das Frontend kann die Datei periodisch lesen, um den Pipeline-Fortschritt anzuzeigen.
+Schreibt pipeline_progress.json für Frontend-Polling. Das Frontend kann die Datei
+periodisch lesen, um den Pipeline-Fortschritt anzuzeigen (Phase, abgeschlossene/laufende
+Schritte, Prozent). Optional wird ein callback aufgerufen.
+
+Phasen: starting, extraction, training, prediction, done
 """
 
 import json
@@ -56,7 +59,7 @@ def write_progress(
         out_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
-        pass
+        pass  # Kein Abbruch bei Schreibfehlern (z.B. Ordner nicht beschreibbar)
 
     if callback is not None:
         callback(phase, total, completed_list, in_progress_list, message, remaining, percent)

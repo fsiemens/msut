@@ -3,13 +3,12 @@
 Modul: plots
 ============
 Generiert Grafiken für Training und Vorhersage. Speichert in Unterordnern von
-artifacts/plots/: confusion/, importance/, accuracy/, prediction/
+artifacts/plots/: confusion/, importance/, accuracy/
 
-Hauptfunktionen:
-    plot_confusion_matrix()     - Konfusionsmatrix pro Modell
-    plot_feature_importance()   - Feature Importance (Top 30) pro Modell
-    plot_accuracy()             - Balkendiagramm der Modell-Genauigkeiten
-    plot_prediction_results()   - Vorhersage richtig/falsch pro Recording
+- Konfusionsmatrix: Richtig/Falsch-Klassifikation pro Modell
+- Feature Importance: Top 30 pro Modell (RF/GB: feature_importances_; LogReg: |coef_|)
+- plot_feature_importance_all_models: Kombinierter Plot für alle Modelle
+- _align_feat_cols: Passt feat_cols an, wenn Imputer Spalten entfernt hat (Dimension-Mismatch-Vermeidung)
 """
 
 from pathlib import Path
@@ -28,11 +27,9 @@ def _ensure_dir(path: Path) -> Path:
 
 def _align_feat_cols(pipe, feat_cols: list[str], imp: np.ndarray) -> list[str]:
     """
-    Versucht feat_cols an die tatsächlich im Modell genutzten Features anzupassen.
-
-    Falls beim Featuretools-Merge doppelte Spalten wie driver_id_x/driver_id_y entstehen,
-    werden diese in der Pipeline (z.B. SimpleImputer) effektiv entfernt. Dann gilt
-    len(imp) != len(feat_cols) und die Importance-Plots würden leer bleiben.
+    Passt feat_cols an die tatsächlich im Modell genutzten Features an.
+    Falls SimpleImputer Spalten mit NaN-Statistik entfernt hat, stimmt len(imp) != len(feat_cols).
+    Dann filtern wir feat_cols anhand der gültigen Imputer-Statistiken.
     """
     try:
         if len(imp) == len(feat_cols):
@@ -109,16 +106,16 @@ def plot_feature_importance(
         if clf is None:
             return None
         if hasattr(clf, "feature_importances_"):
-            imp = clf.feature_importances_
+            imp = clf.feature_importances_  # RF, GradientBoosting
         elif hasattr(clf, "coef_"):
-            # LogReg: coef_ ist (n_classes, n_features), Betrag mitteln
+            # LogReg: coef_ ist (n_classes, n_features), Betrag über Klassen mitteln
             imp = np.abs(clf.coef_).mean(axis=0)
         else:
             return None
         feat_cols_aligned = _align_feat_cols(pipe, feat_cols, imp)
         if len(imp) != len(feat_cols_aligned):
-            return None
-        idx = np.argsort(imp)[::-1][:30]  # Top 30
+            return None  # Dimension-Mismatch nach Alignment – Plot überspringen
+        idx = np.argsort(imp)[::-1][:30]  # Top 30 Features nach Importance
         imp_sorted = imp[idx]
         names_sorted = [feat_cols_aligned[i] for i in idx]
         fig, ax = plt.subplots(figsize=(10, 8))

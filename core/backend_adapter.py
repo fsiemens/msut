@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 Modul: backend_adapter
-==================
-Schnittstelle für Tkinter- und andere GUI-Frontends. Kapselt run.train() und
-predict.predict() mit Fehlerbehandlung und optionalem log_callback. Gibt bei
-Fehlern (False, msg) zurück statt Exceptions zu werfen.
+=====================
+Schnittstelle für Tkinter- und andere GUI-Frontends. Kapselt train() und predict()
+mit Fehlerbehandlung. Gibt bei Fehlern (False, msg) bzw. (False, msg, {}) zurück
+statt Exceptions zu werfen – damit das Frontend Fehler anzeigen kann ohne zu crashen.
 
-API-Funktionen:
-    train()            - Trainiert Modelle, gibt (ok, msg) zurück
-    predict()          - Führt Vorhersage aus, gibt (ok, out, ergebnisse) zurück
-    write_labels_file() - Schreibt Label-Datei aus Dateipfad-Liste
-    get_config()       - Liefert aktuelle Konfiguration als dict
+- train(): Trainiert Modelle, apply_overrides für Pfade, write_progress für Status
+- predict(): Führt Vorhersage aus, liefert ergebnisse als dict pro Modell
+- get_config() / set_config(): Konfiguration für GUI-Voreinstellungen
+- validate_csv(): Prüft, ob eine CSV-Datei lesbar ist
 """
 
 import sys
@@ -24,7 +23,7 @@ from .train import train as _train
 from .data import load_csv
 from .predict import predict as _predict
 
-# Projekt-Root in sys.path, damit Importe auch bei Aufruf von außerhalb funktionieren
+# Projekt-Root in sys.path, damit Importe auch bei Aufruf von außerhalb (z.B. GUI) funktionieren
 _proj = Path(__file__).resolve().parent
 if str(_proj) not in sys.path:
     sys.path.insert(0, str(_proj))
@@ -52,7 +51,7 @@ def train(data_dir : str | Path, labels : pd.DataFrame, artifacts_dir, progress_
         _train(labels=labels, progress_callback=progress_callback, use_grid_search=use_grid_search)
         return True, None
     except SystemExit as e:
-        # run.train() wirft SystemExit bei Fehlern (z.B. keine Labels)
+        # train() wirft SystemExit bei Fehlern (z.B. keine Labels gefunden)
         return False, str(e) if e.code else "Unbekannter Fehler"
     except Exception as e:
         return False, str(e)
@@ -74,7 +73,7 @@ def predict(data_dir : str | Path, test_labels_file : pd.DataFrame, artifacts_di
     """
     test_labels_file = test_labels_file.copy()
     if not "Label" in test_labels_file:
-        test_labels_file["Label"] = ""
+        test_labels_file["Label"] = ""  # Label-Spalte optional für Vorhersage
 
     try:
         config.apply_overrides(
@@ -85,7 +84,7 @@ def predict(data_dir : str | Path, test_labels_file : pd.DataFrame, artifacts_di
         out_dir = Path(artifacts_dir)
         write_progress(out_dir, phase="starting", message="Starte Vorhersage...", callback=progress_callback)
         _predict(test_labels_file=test_labels_file, progress_callback=progress_callback)
-        # predict.py schreibt test_ergebnis_*.csv – diese einlesen und als dict zurückgeben
+        # predict.py schreibt test_ergebnis_*.csv – einlesen und als dict für GUI zurückgeben
         ergebnisse = {}
         for mdl in config.MODELS:
             csv_path = Path(artifacts_dir) / f"test_ergebnis_{mdl}.csv"
@@ -147,6 +146,7 @@ def set_config(settings : dict):
     print(settings)
 
 def validate_csv(path : str | Path) -> bool:
+    """Prüft, ob eine CSV-Datei lesbar ist (z.B. vor Import im GUI)."""
     try:
         load_csv(path)
         return True

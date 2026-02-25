@@ -3,11 +3,11 @@
 Modul: predict
 ==============
 Vorhersage-Pipeline für die Fahrererkennung. Lädt trainierte Modelle und Test-Labels,
-extrahiert Features, führt Vorhersage pro Modell aus und aggregiert pro Recording
-(Vorhersage = argmax über gemittelte Fenster-Wahrscheinlichkeiten). Schreibt
-Ergebnisse in test_ergebnis_*.csv.
+extrahiert Features mit derselben Struktur wie beim Training, führt Vorhersage pro
+Modell aus und aggregiert pro Recording (argmax über gemittelte Fenster-Wahrscheinlichkeiten).
+Schreibt Ergebnisse in test_ergebnis_*.csv und erzeugt Feature-Importance-Plots.
 
-CLI: python predict.py [--data-dir DIR] [--test-labels FILE] [--artifacts DIR] [--config PATH]
+CLI: python -m FlorianRepo.core.predict [--data-dir DIR] [--test-labels FILE] [--artifacts DIR] [--config PATH]
 """
 
 import argparse
@@ -48,7 +48,7 @@ def predict(data_dir=None, test_labels_file : str | Path | pd.DataFrame | None =
     artifacts_dir = Path(artifacts_dir or config.ARTIFACTS_DIR)
 
     write_progress(artifacts_dir, phase="starting", message="Lade Test-Labels...", callback=progress_callback)
-    # FEATURE_SET und feat_cols aus erstem Modell laden (müssen übereinstimmen)
+    # FEATURE_SET und feat_cols aus erstem Modell laden – müssen mit Training übereinstimmen
     _ld = joblib.load(artifacts_dir / f"model_{config.MODELS[0]}.joblib")
     FEATURE_SET, feat_cols = _ld[2], _ld[1]
 
@@ -86,7 +86,7 @@ def predict(data_dir=None, test_labels_file : str | Path | pd.DataFrame | None =
         model_classes = list(inner.classes_)
         pdf = pd.DataFrame(proba, columns=model_classes)
         pdf["rec"], pdf["y_true"] = result["recording"].values, result["driver_id"].values
-        # Pro Recording: Wahrscheinlichkeiten mitteln, argmax = Vorhersage
+        # Recording-Level: Wahrscheinlichkeiten pro Recording mitteln, argmax = finale Vorhersage
         agg = pdf.groupby("rec", sort=False).agg({**{c: "mean" for c in model_classes}, "y_true": "first"})
         recs = [{"recording": r, "soll": agg.loc[r, "y_true"], "ist": model_classes[np.argmax(agg.loc[r, model_classes].values)], "korrekt": model_classes[np.argmax(agg.loc[r, model_classes].values)] == agg.loc[r, "y_true"]} for r in agg.index]
         out = artifacts_dir / f"test_ergebnis_{mdl}.csv"

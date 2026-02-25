@@ -2,16 +2,18 @@
 """
 Modul: optimize
 ===============
-Hyperparameter-Optimierung via GridSearch für die Fahrererkennung. Nutzt
-StratifiedGroupKFold und Recording-Level-Aggregation (wie train.py), damit die
-Bewertung mit dem finalen Training übereinstimmt.
+Hyperparameter-Optimierung via GridSearch für die Fahrererkennung. Testet
+Parameterkombinationen und bewertet jede mit StratifiedGroupKFold sowie
+Recording-Level-Aggregation (Wahrscheinlichkeiten pro Recording mitteln, argmax).
+Damit entspricht die Bewertung dem finalen Training und es entsteht keine
+Datenleckage durch überlappende Fenster.
 
 Unterstützte Modelle: randomforest, logreg, gradientboosting
-GradientBoosting-Grid: n_estimators, learning_rate, max_depth, subsample (0.8 = Stochastic GB)
+GradientBoosting: n_estimators, learning_rate, max_depth, subsample (0.8 = Stochastic GB)
 
 Hauptfunktionen:
-    get_param_grids()   - Liefert Parametergrids pro Modell
-    run_grid_search()   - Führt GridSearch für ein Modell aus
+    get_param_grids()     - Liefert Parametergrids pro Modell
+    run_grid_search()     - Führt GridSearch für ein Modell aus
     run_grid_search_all() - GridSearch für alle konfigurierten Modelle
 """
 
@@ -90,6 +92,7 @@ def _recording_level_accuracy(pipe, X, y, groups, classes):
     Returns:
         float: Accuracy (0..1)
     """
+    # Recording-Level: Pro Gruppe Wahrscheinlichkeiten mitteln, argmax = Vorhersage
     proba = pipe.predict_proba(X)
     inner = pipe.named_steps["clf"]
     model_classes = list(inner.classes_)
@@ -140,6 +143,7 @@ def run_grid_search(
     cv = StratifiedGroupKFold(n_splits=cv_splits, shuffle=True, random_state=random_state)
     classes = sorted(y.unique().tolist())
 
+    # Alle Parameterkombinationen durchlaufen (kein GridSearchCV, da custom scoring)
     keys = list(param_grid.keys())
     values = [param_grid[k] for k in keys]
     combinations = list(product(*values))
@@ -165,7 +169,7 @@ def run_grid_search(
             ("scaler", StandardScaler()),
             ("clf", clf),
         ])
-
+        # Pro Kombination: CV-Splits, Recording-Level-Accuracy als Metrik
         scores = []
         for train_idx, test_idx in cv.split(X, y, groups):
             pipe.fit(X.iloc[train_idx], y.iloc[train_idx])

@@ -3,11 +3,12 @@
 Modul: train
 ============
 Trainings-Pipeline für die Fahrererkennung. Lädt Labels und Recordings, extrahiert
-Features, trainiert RandomForest, LogisticRegression und GradientBoosting mit StratifiedGroupKFold
-(Recordings bleiben zusammen, keine Datenleckage). Optional: GridSearch für Hyperparameter.
-Speichert Modelle und CV-Ergebnisse.
+Features, trainiert RandomForest, LogisticRegression und GradientBoosting mit
+StratifiedGroupKFold (Recordings bleiben zusammen, keine Datenleckage). Optional:
+GridSearch für Hyperparameter vor dem finalen Training. Speichert Modelle, CV-Ergebnisse,
+Konfusionsmatrizen und Feature-Importance-Plots.
 
-CLI: python train.py [--data-dir DIR] [--labels FILE] [--artifacts DIR] [--config PATH] [--optimize]
+CLI: python -m train [--data-dir DIR] [--labels FILE] [--artifacts DIR] [--config PATH] [--optimize]
 """
 
 import argparse
@@ -84,7 +85,8 @@ def train(
 
     feat_cols = [c for c in result.columns if c not in ("driver_id", "recording")]
     X, y = result[feat_cols], result["driver_id"]
-    groups = np.asarray(result["recording"].values)  # Gruppierung nach Recording (keine Datenleckage)
+    # Gruppierung nach Recording: Fenster derselben Fahrt nicht in Train und Test
+    groups = np.asarray(result["recording"].values)
     classes = sorted(y.unique().tolist())
     cv = StratifiedGroupKFold(n_splits=cv_splits, shuffle=True, random_state=random_state)
     artifacts_dir.mkdir(exist_ok=True)
@@ -150,6 +152,7 @@ def train(
             proba = pipe.predict_proba(X.iloc[test_idx])
             inner = pipe.named_steps["clf"]
             # Klassen-Reihenfolge kann abweichen – Matrix auf unsere classes mappen
+            # (für Recording-Level-Aggregation und Konfusionsmatrix)
             fp = np.zeros((proba.shape[0], len(classes)))
             for j, cls in enumerate(inner.classes_):
                 if str(cls) in classes: fp[:, classes.index(str(cls))] = proba[:, j]
@@ -163,7 +166,8 @@ def train(
                 pl.append(classes[np.argmax(agg.loc[gid][classes].values)])
         acc = sum(1 for t, p in zip(tl, pl) if str(t) == str(p)) / len(tl) if tl else 0
         accuracies[mdl] = acc
-        pipe.fit(X, y)  # Finales Modell auf allen Daten
+        # Finales Modell auf allen Trainingsdaten für spätere Vorhersage
+        pipe.fit(X, y)
         joblib.dump((pipe, feat_cols, config.FEATURE_SET), artifacts_dir / f"model_{mdl}.joblib")
         ergebnis.loc[len(ergebnis)] = [mdl, acc]
         print(f"{mdl}: {acc:.2%}")
@@ -181,7 +185,7 @@ def train(
         callback=progress_callback
     )
     plot_accuracy(accuracies, artifacts_dir)
-    # Kombinierter Feature-Importance-Plot für alle Modelle
+    # Kombinierter Feature-Importance-Plot für alle Modelle (Subplots nebeneinander)
     pipes_all = {mdl: joblib.load(artifacts_dir / f"model_{mdl}.joblib")[0] for mdl in config.MODELS}
     plot_feature_importance_all_models(pipes_all, feat_cols, artifacts_dir)
     ergebnis.to_csv(artifacts_dir / "ergebnis.csv")
